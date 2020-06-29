@@ -1,6 +1,15 @@
 # CISsors
 
-CISsors is a tool to extract CIS benchmark rules from a PDF to a YAML format making it easy to parse.
+CISsors is a tool for converting CIS benchmark rules from a PDF to a YAML format.
+
+This can be quite useful if you need further processing of these rules in other
+tools and scripts.
+
+## Installation
+
+```bash
+go get -u github.com/xornivore/cissors/...
+```
 
 ## Usage
 

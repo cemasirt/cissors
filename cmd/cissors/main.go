@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/xornivore/cissors"
+
 	"github.com/ledongthuc/pdf"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"gopkg.in/yaml.v3"
@@ -18,24 +20,10 @@ var (
 	idPrefix = kingpin.Flag("id-prefix", "ID prefix for rules.").String()
 )
 
-// Location describes location of the Rule in a CIS benchmark
-type Location struct {
-	ID   string `yaml:"id"`
-	Name string `yaml:"name"`
-}
-
-// Rule describes a CIS benchmark rule
-type Rule struct {
-	ID       string            `yaml:"id"`
-	Name     string            `yaml:"name"`
-	Location []Location        `yaml:"location,omitempty"`
-	Sections map[string]string `yaml:"-,inline"`
-}
-
 var (
 	pageMarkerRegex = regexp.MustCompile(`^([\d]+ \| Page)  `)
 
-	titleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\s\d{1,3}|\s(?:[0-9]{1,3}\.){3}[0-9]{1,3})*(\.+)?\s\d+\s`)
+	titleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\s\d{1,5}|\s(?:[0-9]{1,3}\.){3}[0-9]{1,3}(\/\d{1,2})?)*(\.+)?\s\d+\s`)
 	titleCropRegex    = regexp.MustCompile(`\s?\.+\s\d+\s$`)
 	titleIDRegex      = regexp.MustCompile(`((\d+\.)*?(\d+))\s`)
 
@@ -43,7 +31,7 @@ var (
 		`((Profile Applicability|Description|Rationale|Audit|Remediation|Impact|Default Value|References|CIS Controls)\:\s)`,
 	)
 
-	ruleTitleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\d{1,3}|(?:[0-9]{1,3}\.){3}[0-9]{1,3})*\((Not\s)?Scored\)`)
+	ruleTitleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\d{1,5}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}(\/\d{1,2})?)*\((Not\s)?Scored\)`)
 
 	ruleTitleTestRegex = regexp.MustCompile(`\((Not\s)?Scored\)$`)
 
@@ -103,7 +91,7 @@ func main() {
 	var (
 		nextRuleContent string
 		nextRuleTitle   string
-		rules           []*Rule
+		rules           []*cissors.Rule
 	)
 
 	walkPages(reader, startPage, reader.NumPage(), func(page int, content string) bool {
@@ -170,7 +158,7 @@ func main() {
 	fmt.Fprintf(f, "---\n%s", string(yamlData))
 }
 
-func extractRule(title, content string) (*Rule, error) {
+func extractRule(title, content string) (*cissors.Rule, error) {
 	id, name, err := splitTitle(title)
 	if err != nil {
 		return nil, fmt.Errorf("Malformed rule title %s: %w", title, err)
@@ -182,7 +170,7 @@ func extractRule(title, content string) (*Rule, error) {
 		return nil, fmt.Errorf("No valid sections for rule %s", title)
 	}
 
-	rule := &Rule{
+	rule := &cissors.Rule{
 		ID:       *idPrefix + id,
 		Name:     name,
 		Sections: map[string]string{},
@@ -276,14 +264,14 @@ func sectionContent(content string) string {
 	return strings.ReplaceAll(content, "  ", " ")
 }
 
-func getRuleLocation(ruleIDToName map[string]string, ruleID string) []Location {
-	var loc []Location
+func getRuleLocation(ruleIDToName map[string]string, ruleID string) []cissors.Location {
+	var loc []cissors.Location
 	const sep = "."
 	parts := strings.Split(ruleID, sep)
 	for i := 0; i < len(parts)-1; i++ {
 		parentID := strings.Join(parts[:i+1], sep)
 		if parentName, ok := ruleIDToName[parentID]; ok {
-			loc = append(loc, Location{
+			loc = append(loc, cissors.Location{
 				ID:   *idPrefix + parentID,
 				Name: parentName,
 			})
