@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -17,6 +18,7 @@ var (
 	verbose  = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
 	inFile   = kingpin.Arg("file", "File to parse.").Required().String()
 	outFile  = kingpin.Flag("out", "Output to file.").Short('o').String()
+	format   = kingpin.Flag("format", "Format for the output - default YAML").String()
 	idPrefix = kingpin.Flag("id-prefix", "ID prefix for rules.").String()
 )
 
@@ -135,14 +137,26 @@ func main() {
 		return true
 	})
 
-	yamlData, err := yaml.Marshal(&rules)
+	var output = ""
+	if *format == "json" {
+		jsonData, err := json.MarshalIndent(&rules, "", "    ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to serialize as JSON: %v\n", err)
+			return
+		}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to serialize as YAML: %v\n", err)
-		return
+		output = string(jsonData)
+	} else {
+		yamlData, err := yaml.Marshal(&rules)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to serialize as YAML: %v\n", err)
+			return
+		}
+
+		output = fmt.Sprintf("---\n%s", string(yamlData))
 	}
 
-	fmt.Print("✂️️️  All done! Enjoy your YAML masterpiece!\n\n")
+	fmt.Print("✂️️️  All done! Enjoy your masterpiece!\n\n")
 
 	f := os.Stdout
 	if *outFile != "" {
@@ -155,7 +169,7 @@ func main() {
 		f = file
 	}
 
-	fmt.Fprintf(f, "---\n%s", string(yamlData))
+	fmt.Fprint(f, output)
 }
 
 func extractRule(title, content string) (*cissors.Rule, error) {
