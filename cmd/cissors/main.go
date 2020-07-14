@@ -23,14 +23,15 @@ var (
 )
 
 var (
-	pageMarkerRegex = regexp.MustCompile(`^([\d]+ \| Page)  `)
+	pageMarkerRegex = regexp.MustCompile(`^([\d]+\s+\|\s+Page)`)
 
 	titleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\s\d{1,5}|\s(?:[0-9]{1,3}\.){3}[0-9]{1,3}(\/\d{1,2})?)*(\.+)?\s\d+\s`)
 	titleCropRegex    = regexp.MustCompile(`\s?\.+\s\d+\s$`)
 	titleIDRegex      = regexp.MustCompile(`((\d+\.)*?(\d+))\s`)
+	whitespace        = regexp.MustCompile(`\s+`)
 
 	sectionRegex = regexp.MustCompile(
-		`((Profile Applicability|Description|Rationale|Audit|Remediation|Impact|Default Value|References|CIS Controls)\:\s)`,
+		`((Profile Applicability|Description|Rationale|Audit|Remediation|Impact|Default\sValue|References|CIS\sControls)\:\s+)`,
 	)
 
 	ruleTitleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\d{1,5}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}(\/\d{1,2})?)*\((Not\s)?Scored\)`)
@@ -236,7 +237,7 @@ func splitTitle(title string) (id, name string, err error) {
 	}
 
 	id = title[idxID[0] : idxID[1]-1]
-	name = title[idxID[1]:]
+	name = replaceWhitespaces(title[idxID[1]:])
 	return
 }
 
@@ -269,13 +270,17 @@ func findNamedValuesByRegex(s string, r *regexp.Regexp) []namedValue {
 }
 
 func sectionKeyName(name string) string {
-	key := strings.ToLower(strings.Trim(name, " :"))
-	return strings.ReplaceAll(key, " ", "_")
+	key := strings.ToLower(strings.Trim(name, " :\t\n"))
+	return whitespace.ReplaceAllString(key, "_")
 }
 
 func sectionContent(content string) string {
 	content = strings.TrimSpace(nonASCIIRegex.ReplaceAllLiteralString(content, ""))
-	return strings.ReplaceAll(content, "  ", " ")
+	return replaceWhitespaces(content)
+}
+
+func replaceWhitespaces(content string) string {
+	return whitespace.ReplaceAllString(content, " ")
 }
 
 func getRuleLocation(ruleIDToName map[string]string, ruleID string) []cissors.Location {
