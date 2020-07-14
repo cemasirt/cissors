@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -140,13 +141,19 @@ func main() {
 
 	var output = ""
 	if *format == "json" {
-		jsonData, err := json.MarshalIndent(&rules, "", "    ")
+		buf := new(bytes.Buffer)
+		enc := json.NewEncoder(buf)
+		enc.SetEscapeHTML(false)
+
+		err := enc.Encode(&rules)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to serialize as JSON: %v\n", err)
 			return
 		}
 
-		output = string(jsonData)
+		var out bytes.Buffer
+		json.Indent(&out, buf.Bytes(), "", "    ")
+		output = out.String()
 	} else {
 		yamlData, err := yaml.Marshal(&rules)
 		if err != nil {
