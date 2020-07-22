@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -17,23 +19,23 @@ var (
 	verbose  = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
 	inFile   = kingpin.Arg("file", "File to parse.").Required().String()
 	outFile  = kingpin.Flag("out", "Output to file.").Short('o').String()
+	format   = kingpin.Flag("format", "Format for the output - default YAML").String()
 	idPrefix = kingpin.Flag("id-prefix", "ID prefix for rules.").String()
 )
 
 var (
-	pageMarkerRegex = regexp.MustCompile(`^([\d]+ \| Page)  `)
+	pageMarkerRegex = regexp.MustCompile(`^([\d]+\s+\|\s+Page)`)
 
 	titleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\s\d{1,5}|\s(?:[0-9]{1,3}\.){3}[0-9]{1,3}(\/\d{1,2})?)*(\.+)?\s\d+\s`)
 	titleCropRegex    = regexp.MustCompile(`\s?\.+\s\d+\s$`)
-	titleIDRegex      = regexp.MustCompile(`((\d+\.)*?(\d+))\s`)
+	titleIDRegex      = regexp.MustCompile(`([\d+\.]*\d+)\s([\w\s-\.\/\:]*)(?:\(((?:Not\s)?Scored)\))?`)
+	whitespace        = regexp.MustCompile(`\s+`)
 
 	sectionRegex = regexp.MustCompile(
-		`((Profile Applicability|Description|Rationale|Audit|Remediation|Impact|Default Value|References|CIS Controls)\:\s)`,
+		`((Profile Applicability|Description|Rationale|Audit|Remediation|Impact|Default\sValue|References|CIS\sControls)\:\s+)`,
 	)
 
 	ruleTitleExtractRegex = regexp.MustCompile(`((\d+\.)*?(\d+))\s([A-Za-z]*)(\s[A-Za-z\:\.,_\-\/\(\)]*?|\d{1,5}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}(\/\d{1,2})?)*\((Not\s)?Scored\)`)
-
-	ruleTitleTestRegex = regexp.MustCompile(`\((Not\s)?Scored\)$`)
 
 	nonASCIIRegex = regexp.MustCompile(`[[:^ascii:]]`)
 )
@@ -69,7 +71,7 @@ func main() {
 			// Crop the trailing part
 			title = titleCropRegex.ReplaceAllString(title, "")
 
-			id, name, err := splitTitle(title)
+			id, name, isActualRule, _, err := splitTitle(title)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				continue
@@ -79,7 +81,7 @@ func main() {
 				fmt.Printf("id: %s - name: %s\n", id, name)
 			}
 			ruleIDToName[id] = name
-			if ruleTitleTestRegex.MatchString(name) {
+			if isActualRule {
 				ruleCount++
 			}
 		}
@@ -135,14 +137,32 @@ func main() {
 		return true
 	})
 
-	yamlData, err := yaml.Marshal(&rules)
+	var output = ""
+	if *format == "json" {
+		buf := new(bytes.Buffer)
+		enc := json.NewEncoder(buf)
+		enc.SetEscapeHTML(false)
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to serialize as YAML: %v\n", err)
-		return
+		err := enc.Encode(&rules)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to serialize as JSON: %v\n", err)
+			return
+		}
+
+		var out bytes.Buffer
+		json.Indent(&out, buf.Bytes(), "", "    ")
+		output = out.String()
+	} else {
+		yamlData, err := yaml.Marshal(&rules)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to serialize as YAML: %v\n", err)
+			return
+		}
+
+		output = fmt.Sprintf("---\n%s", string(yamlData))
 	}
 
-	fmt.Print("✂️️️  All done! Enjoy your YAML masterpiece!\n\n")
+	fmt.Print("✂️️️  All done! Enjoy your masterpiece!\n\n")
 
 	f := os.Stdout
 	if *outFile != "" {
@@ -155,11 +175,11 @@ func main() {
 		f = file
 	}
 
-	fmt.Fprintf(f, "---\n%s", string(yamlData))
+	fmt.Fprint(f, output)
 }
 
 func extractRule(title, content string) (*cissors.Rule, error) {
-	id, name, err := splitTitle(title)
+	id, name, _, scored, err := splitTitle(title)
 	if err != nil {
 		return nil, fmt.Errorf("Malformed rule title %s: %w", title, err)
 	}
@@ -172,6 +192,7 @@ func extractRule(title, content string) (*cissors.Rule, error) {
 
 	rule := &cissors.Rule{
 		ID:       *idPrefix + id,
+		Scored:   scored,
 		Name:     name,
 		Sections: map[string]string{},
 	}
@@ -213,16 +234,23 @@ func cutPageMarker(s string) (string, bool) {
 	return s[pm[1]:], true
 }
 
-func splitTitle(title string) (id, name string, err error) {
-	// Split into bullet index and actual name
-	idxID := titleIDRegex.FindStringSubmatchIndex(title)
-	if len(idxID) == 0 {
-		err = fmt.Errorf("failed to split title into id and name: %s", title)
+// Split a title into its id, its name, whether it's an actual rule or group of rules
+// and whether it's scored
+func splitTitle(title string) (id, name string, isActualRule bool, scored bool, err error) {
+	titleParts := titleIDRegex.FindStringSubmatch(title)
+	if titleParts == nil {
+		err = fmt.Errorf("failed to split title into id, name and scored: %s", title)
 		return
 	}
 
-	id = title[idxID[0] : idxID[1]-1]
-	name = title[idxID[1]:]
+	id = titleParts[1]
+	name = replaceWhitespaces(titleParts[2])
+	if len(titleParts[3]) > 0 {
+		isActualRule = true
+		scored = titleParts[3] == "Scored"
+	} else {
+		isActualRule = false
+	}
 	return
 }
 
@@ -255,13 +283,17 @@ func findNamedValuesByRegex(s string, r *regexp.Regexp) []namedValue {
 }
 
 func sectionKeyName(name string) string {
-	key := strings.ToLower(strings.Trim(name, " :"))
-	return strings.ReplaceAll(key, " ", "_")
+	key := strings.ToLower(strings.Trim(name, " :\t\n"))
+	return whitespace.ReplaceAllString(key, "_")
 }
 
 func sectionContent(content string) string {
 	content = strings.TrimSpace(nonASCIIRegex.ReplaceAllLiteralString(content, ""))
-	return strings.ReplaceAll(content, "  ", " ")
+	return replaceWhitespaces(content)
+}
+
+func replaceWhitespaces(content string) string {
+	return whitespace.ReplaceAllString(content, " ")
 }
 
 func getRuleLocation(ruleIDToName map[string]string, ruleID string) []cissors.Location {
